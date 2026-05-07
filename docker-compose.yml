@@ -1,0 +1,21 @@
+services:
+  security-rig:
+    build: .
+    image: security-rig:local
+    container_name: security-rig
+    # entrypoint takes a repo URL; override for interactive use:
+    #   docker compose run --rm security-rig https://github.com/foo/bar
+    #   docker compose run --rm --entrypoint bash security-rig
+    volumes:
+      - ./work:/work
+      - security-rig-home:/home/researcher
+      # OAuth volumes — first `claude login` / `codex login` writes here
+      # and persists across runs.
+      - claude-auth:/home/researcher/.claude
+      - codex-auth:/home/researcher/.codex
+    # network: outbound only, no exposed ports
+
+volumes:
+  security-rig-home:
+  claude-auth:
+  codex-auth:

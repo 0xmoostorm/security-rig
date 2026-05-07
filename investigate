@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# investigate <repo-url> [--synth] [--codeql] [--keep-source] [--agent claude|codex]
+#
+# Clones repo (no symlinks, no submodules), runs the security toolchain,
+# writes findings/*.json. By default the cloned source is tarred and
+# removed after scanning so it never leaves the container in raw form.
+set -euo pipefail
+
+usage() {
+    cat <<EOF
+investigate — security-rig CLI
+
+Usage:
+  investigate <repo-url> [--synth] [--codeql] [--keep-source] [--agent codex|claude]
+  investigate --help
+
+Flags:
+  --synth          Run agent synthesis pass over the raw findings → report.md
+  --agent <name>   codex (default) or claude
+  --codeql         Also run CodeQL (only if image baked with codeql block)
+  --keep-source    Keep the cloned repo on disk after scanning. Default is to
+                   tar it to source.tar.gz and delete the working tree, so the
+                   raw repo never sits on the host bind-mount.
+
+Safety notes:
+  - clone disables symlink creation (-c core.symlinks=false) so a malicious
+    repo can't write symlinks that escape the work dir.
+  - submodules are NOT recursed.
+  - by default the host /work mount only sees findings/ + source.tar.gz
+    (an inert archive). Don't 'cd' into work/<repo>/ on host without thinking.
+
+Examples:
+  investigate https://github.com/owner/repo
+  investigate https://github.com/owner/repo --synth
+  investigate https://github.com/owner/repo --synth --agent claude --keep-source
+EOF
+}
+
+if [[ $# -eq 0 || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    usage; exit 0
+fi
+
+REPO="$1"; shift || true
+SYNTH=0; CODEQL=0; KEEP_SOURCE=0; AGENT="codex"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --synth)        SYNTH=1; shift ;;
+        --codeql)       CODEQL=1; shift ;;
+        --keep-source)  KEEP_SOURCE=1; shift ;;
+        --agent)        AGENT="$2"; shift 2 ;;
+        *) echo "unknown flag: $1" >&2; exit 2 ;;
+    esac
+done
+
+NAME=$(basename "$REPO" .git)
+TS=$(date +%Y%m%d-%H%M%S)
+WORK="/work/${NAME}-${TS}"
+F="${WORK}/findings"
+mkdir -p "$F"
+cd "$WORK"
+
+log() { printf "\n→ %s\n" "$*"; }
+
+log "clone $REPO (no symlinks, no submodules)"
+git -c core.symlinks=false clone --depth 1 --no-recurse-submodules "$REPO" repo
+cd repo
+
+run() {
+    local label="$1"; shift
+    log "$label"
+    if "$@"; then echo "  ✓ $label"; else echo "  ⚠ $label exited $?"; fi
+}
+
+run "depenemy"     depenemy scan . --output json --output-file "$F/depenemy.json"
+
+# osv-scanner v2: needs "scan source" subcommand, only finds lockfiles.
+# Exit 128 == "no package sources" — treat as informational, not a failure.
+log "osv-scanner"
+set +e
+osv_out=$(osv-scanner scan source --recursive --format json . 2>&1)
+osv_rc=$?
+set -e
+if [[ $osv_rc -eq 0 ]]; then
+    echo "$osv_out" > "$F/osv-scanner.json"
+    echo "  ✓ osv-scanner"
+elif echo "$osv_out" | grep -q "No package sources found"; then
+    echo '{"results":[],"note":"no lockfiles in repo"}' > "$F/osv-scanner.json"
+    echo "  ℹ osv-scanner — no lockfiles to scan"
+else
+    echo "$osv_out" > "$F/osv-scanner.json"
+    echo "  ⚠ osv-scanner exited $osv_rc"
+fi
+
+run "trivy fs"     trivy fs --quiet --format json --output "$F/trivy.json" .
+run "grype"        bash -c "grype dir:. -o json > '$F/grype.json' 2>/dev/null"
+run "gitleaks"     gitleaks detect --no-git -s . -r "$F/gitleaks.json" -f json
+run "semgrep"      semgrep --config=auto --json --output="$F/semgrep.json" --quiet .
+
+if [[ $CODEQL -eq 1 ]]; then
+    if command -v codeql >/dev/null; then
+        log "codeql (this will take a while)"
+        codeql database create "$WORK/codeql-db" --source-root . --language=javascript || true
+        codeql database analyze "$WORK/codeql-db" --format=sarif-latest --output="$F/codeql.sarif" || true
+    else
+        echo "  ⚠ codeql not in image — rebuild Dockerfile with codeql block uncommented"
+    fi
+fi
+
+cd "$WORK"
+log "raw findings written to $F/"
+ls -la "$F/"
+
+if [[ $SYNTH -eq 1 ]]; then
+    log "synthesizing report with $AGENT"
+    cat /home/researcher/prompts/synthesize-report.md > "$WORK/_prompt.md"
+    echo "" >> "$WORK/_prompt.md"
+    echo "Findings directory (read these JSON files): $F" >> "$WORK/_prompt.md"
+    case "$AGENT" in
+        codex)
+            if ! command -v codex >/dev/null; then echo "  ⚠ codex not installed"; exit 1; fi
+            cd "$WORK"
+            # --sandbox danger-full-access: bubblewrap can't create user namespaces
+            # in non-privileged containers; the container IS our isolation boundary.
+            codex exec \
+                --skip-git-repo-check \
+                --sandbox danger-full-access \
+                --cd "$WORK" \
+                "$(cat $WORK/_prompt.md)" > "$WORK/report.md" 2>&1 || true
+            ;;
+        claude)
+            if ! command -v claude >/dev/null; then echo "  ⚠ claude not installed"; exit 1; fi
+            cd "$WORK"
+            claude -p "$(cat $WORK/_prompt.md)" --output-format text > "$WORK/report.md" 2>&1 || true
+            ;;
+        *)
+            echo "  ⚠ unknown agent: $AGENT (use codex or claude)"; exit 2 ;;
+    esac
+    rm -f "$WORK/_prompt.md"
+    log "report at $WORK/report.md"
+fi
+
+# Tar+remove the cloned source unless --keep-source. Findings stay on host;
+# the inert tarball preserves audit trail without leaving extracted files
+# (and any potential symlink games) on the bind-mount.
+if [[ $KEEP_SOURCE -eq 0 ]]; then
+    log "archiving and removing cloned source (use --keep-source to skip)"
+    cd "$WORK"
+    tar -czf source.tar.gz repo/ 2>/dev/null
+    rm -rf repo/
+    echo "  ✓ source archived to source.tar.gz"
+fi
+
+log "done — outputs in $WORK"

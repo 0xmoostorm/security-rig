@@ -1,0 +1,12 @@
+# Scan outputs — never commit, may contain real-world findings, secrets, or PII
+work/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local overrides
+docker-compose.override.yml
