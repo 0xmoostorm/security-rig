@@ -84,9 +84,10 @@ RUN mkdir -p $NPM_CONFIG_PREFIX \
         @anthropic-ai/claude-code \
         @openai/codex
 
-# ── investigate CLI ───────────────────────────────────────────────────
+# ── investigate CLI + local IOC scanners ──────────────────────────────
 COPY --chown=researcher:researcher investigate /usr/local/bin/investigate
-RUN sudo chmod +x /usr/local/bin/investigate
+COPY --chown=researcher:researcher scripts/supply-chain-ioc-scan.py /usr/local/bin/supply-chain-ioc-scan
+RUN sudo chmod +x /usr/local/bin/investigate /usr/local/bin/supply-chain-ioc-scan
 
 # ── prompts (used by synthesis pass) ──────────────────────────────────
 COPY --chown=researcher:researcher prompts /home/researcher/prompts

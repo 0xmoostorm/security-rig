@@ -72,6 +72,7 @@ run() {
 }
 
 run "depenemy"     depenemy scan . --output json --output-file "$F/depenemy.json"
+run "supply-chain IOC scan" bash -c "supply-chain-ioc-scan . > '$F/supply-chain-ioc-scan.json'"
 
 # osv-scanner v2: needs "scan source" subcommand, only finds lockfiles.
 # Exit 128 == "no package sources" — treat as informational, not a failure.
