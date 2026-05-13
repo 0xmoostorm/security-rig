@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
     && ln -sf /usr/bin/python3.12 /usr/local/bin/python
 
-# ── node 22 (for openrig + claude code + codex) ───────────────────────
+# ── node 22 (for claude code + codex) ─────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y nodejs \
  && rm -rf /var/lib/apt/lists/*
@@ -96,7 +96,6 @@ ENV NPM_CONFIG_PREFIX=/home/researcher/.npm-global \
     PATH="/home/researcher/.safe-chain/shims:/home/researcher/.safe-chain/bin:/home/researcher/.npm-global/bin:${PATH}"
 RUN mkdir -p $NPM_CONFIG_PREFIX \
  && npm install -g \
-        @openrig/cli \
         @anthropic-ai/claude-code \
         @openai/codex
 

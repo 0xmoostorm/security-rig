@@ -13,7 +13,7 @@ The container is the isolation boundary — a malicious repo can't touch your ho
 | Supply chain | Aikido Safe Chain runtime hardening, depenemy, osv-scanner, trivy, grype, campaign IOC scanner |
 | SAST | semgrep (auto-config), codeql (opt-in) |
 | Secrets | gitleaks |
-| Agents | Claude Code, Codex, OpenRig CLI |
+| Agents | Claude Code, Codex |
 
 ## Build
 
