@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# Host-side CLI for security-rig.
+# Wraps the Docker Compose service so users/agents do not need to remember
+# docker compose incantations.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+SERVICE="security-rig"
+
+usage() {
+    cat <<'EOF'
+security-rig — host CLI wrapper for the security-rig Docker scanner
+
+Usage:
+  security-rig scan <repo-url> [--synth] [--codeql] [--keep-source] [--agent codex|claude]
+  security-rig shell
+  security-rig build [--no-cache]
+  security-rig login codex|claude
+  security-rig clean
+  security-rig doctor
+  security-rig help
+
+Commands:
+  scan       Run an isolated investigation against a GitHub/repo URL.
+  shell      Open an interactive shell inside the scanner image.
+  build      Build/rebuild the scanner image.
+  login      Persist Codex or Claude OAuth inside Docker volumes.
+  clean      Remove local output under ./work after confirmation.
+  doctor     Check host prerequisites and show image/auth/output status.
+
+Examples:
+  security-rig scan https://github.com/owner/repo
+  security-rig scan https://github.com/owner/repo --synth
+  security-rig scan https://github.com/owner/repo --synth --agent claude
+  security-rig login codex
+  security-rig shell
+
+Safety default:
+  scan archives the cloned source to source.tar.gz and removes the extracted
+  working tree unless --keep-source is passed. Do not open retained malicious
+  repos in your host editor.
+EOF
+}
+
+die() { echo "error: $*" >&2; exit 1; }
+log() { printf '→ %s\n' "$*" >&2; }
+
+compose() {
+    if docker compose version >/dev/null 2>&1; then
+        docker compose "$@"
+    elif command -v docker-compose >/dev/null 2>&1; then
+        docker-compose "$@"
+    else
+        die "Docker Compose not found. Install Docker with Compose v2."
+    fi
+}
+
+require_docker() {
+    command -v docker >/dev/null 2>&1 || die "docker not found"
+    docker info >/dev/null 2>&1 || die "docker daemon is not reachable"
+}
+
+cmd="${1:-help}"
+case "$cmd" in
+    help|--help|-h)
+        usage
+        ;;
+
+    scan)
+        shift
+        [[ $# -ge 1 ]] || { usage; exit 2; }
+        require_docker
+        mkdir -p "${ROOT_DIR}/work"
+        cd "$ROOT_DIR"
+        exec compose run --rm "$SERVICE" "$@"
+        ;;
+
+    shell)
+        shift || true
+        require_docker
+        mkdir -p "${ROOT_DIR}/work"
+        cd "$ROOT_DIR"
+        exec compose run --rm --entrypoint bash "$SERVICE" "$@"
+        ;;
+
+    build)
+        shift || true
+        require_docker
+        cd "$ROOT_DIR"
+        exec compose build "$@" "$SERVICE"
+        ;;
+
+    login)
+        shift
+        agent="${1:-}"
+        case "$agent" in
+            codex|claude) ;;
+            *) die "usage: security-rig login codex|claude" ;;
+        esac
+        require_docker
+        cd "$ROOT_DIR"
+        exec compose run --rm --entrypoint "$agent" "$SERVICE" login
+        ;;
+
+    clean)
+        shift || true
+        cd "$ROOT_DIR"
+        if [[ ! -d work ]]; then
+            log "no ./work directory to clean"
+            exit 0
+        fi
+        printf 'Delete all local scan outputs under %s/work? [y/N] ' "$ROOT_DIR" >&2
+        read -r answer
+        case "$answer" in
+            y|Y|yes|YES)
+                rm -rf work
+                mkdir -p work
+                log "cleaned ./work"
+                ;;
+            *) log "aborted" ;;
+        esac
+        ;;
+
+    doctor)
+        require_docker
+        cd "$ROOT_DIR"
+        echo "root: $ROOT_DIR"
+        echo "docker: $(docker --version)"
+        if docker compose version >/dev/null 2>&1; then
+            echo "compose: $(docker compose version)"
+        elif command -v docker-compose >/dev/null 2>&1; then
+            echo "compose: $(docker-compose --version)"
+        fi
+        if docker image inspect security-rig:local >/dev/null 2>&1; then
+            echo "image: security-rig:local present"
+        else
+            echo "image: security-rig:local missing; run 'security-rig build'"
+        fi
+        echo "work_dir: ${ROOT_DIR}/work"
+        mkdir -p work
+        compose ps || true
+        ;;
+
+    *)
+        die "unknown command: $cmd (try: security-rig help)"
+        ;;
+esac

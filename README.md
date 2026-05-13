@@ -15,12 +15,26 @@ The container is the isolation boundary — a malicious repo can't touch your ho
 | Secrets | gitleaks |
 | Agents | Claude Code, Codex |
 
-## Build
+## Install / CLI
 
 ```bash
 git clone https://github.com/0xmoostorm/security-rig.git
 cd security-rig
-docker compose build
+./bin/security-rig build
+```
+
+Optional: put the host CLI on your PATH:
+
+```bash
+ln -sf "$PWD/bin/security-rig" ~/.local/bin/security-rig
+```
+
+Then use:
+
+```bash
+security-rig scan https://github.com/owner/repo
+security-rig doctor
+security-rig help
 ```
 
 First build is slow (~5 min) — pulls trivy, grype, osv-scanner, gitleaks, all npm globals.
@@ -30,8 +44,8 @@ First build is slow (~5 min) — pulls trivy, grype, osv-scanner, gitleaks, all 
 The named volumes `claude-auth` and `codex-auth` persist OAuth across container restarts so you only log in once.
 
 ```bash
-docker compose run --rm --entrypoint claude security-rig login
-docker compose run --rm --entrypoint codex security-rig login
+./bin/security-rig login claude
+./bin/security-rig login codex
 ```
 
 You only need whichever agent you plan to use for synthesis (default is Codex).
@@ -39,7 +53,7 @@ You only need whichever agent you plan to use for synthesis (default is Codex).
 ## Run — basic investigation
 
 ```bash
-docker compose run --rm security-rig https://github.com/owner/repo
+./bin/security-rig scan https://github.com/owner/repo
 ```
 
 Output lands in `./work/<repo>-<timestamp>/` on the host:
@@ -49,16 +63,20 @@ Output lands in `./work/<repo>-<timestamp>/` on the host:
 ## Run — with agent synthesis
 
 ```bash
-docker compose run --rm security-rig https://github.com/owner/repo --synth
+./bin/security-rig scan https://github.com/owner/repo --synth
 ```
 
 Default agent is **Codex**. To use Claude instead:
 
 ```bash
-docker compose run --rm security-rig https://github.com/owner/repo --synth --agent claude
+./bin/security-rig scan https://github.com/owner/repo --synth --agent claude
 ```
 
 The synthesis pass reads `findings/*.json` and writes `report.md` per the prompt at `prompts/synthesize-report.md`.
+
+## Agent skill
+
+This repo ships an agent-facing `SKILL.md`. Agents can load it as procedural context before operating the rig. It captures the safe scan workflow, output interpretation order, Mini Shai-Hulud coverage, and reporting pitfalls.
 
 ## Safety: what's on your host bind-mount
 
@@ -81,7 +99,7 @@ If you ever do use `--keep-source`, **don't open `./work/<repo>/repo/` in VSCode
 ## Run — interactive shell
 
 ```bash
-docker compose run --rm --entrypoint bash security-rig
+./bin/security-rig shell
 ```
 
 Then drive any of the tools directly. `claude` and `codex` are on PATH.
