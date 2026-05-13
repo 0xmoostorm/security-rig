@@ -53,6 +53,22 @@ RUN ARCH=$(dpkg --print-architecture) \
         | tar -xz -C /usr/local/bin gitleaks \
  && chmod +x /usr/local/bin/gitleaks
 
+# ── Aikido Safe Chain (arch-aware, pinned release binary) ──────────────
+# Runtime setup-ci writes shims into the mounted researcher home volume, so the
+# protected package-manager wrappers survive docker-compose's home bind mount.
+ARG SAFE_CHAIN_VERSION=1.4.7
+RUN ARCH=$(dpkg --print-architecture) \
+ && case "$ARCH" in \
+        amd64) SC_ARCH=x64; SC_SHA256=240086114c5e628b99ab850f0b9518a587036cd3688603193be839cfd9520f92 ;; \
+        arm64) SC_ARCH=arm64; SC_SHA256=a002911cd0a9368d0a4cf73098d2e3a354bf0f09450dcd7e3343c3863ff4e7f1 ;; \
+        *) echo "unsupported arch $ARCH" && exit 1 ;; \
+    esac \
+ && curl -sSL "https://github.com/AikidoSec/safe-chain/releases/download/${SAFE_CHAIN_VERSION}/safe-chain-linuxstatic-${SC_ARCH}" \
+        -o /usr/local/bin/safe-chain \
+ && echo "${SC_SHA256}  /usr/local/bin/safe-chain" | sha256sum -c - \
+ && chmod +x /usr/local/bin/safe-chain \
+ && safe-chain --version
+
 # ── (optional) codeql cli — heavy, ~500MB; uncomment if wanted ────────
 # RUN curl -sSL https://github.com/github/codeql-cli-binaries/releases/latest/download/codeql-linux64.zip \
 #         -o /tmp/codeql.zip \
@@ -77,7 +93,7 @@ RUN pipx ensurepath \
 
 # ── node tools (user-scoped npm prefix) ───────────────────────────────
 ENV NPM_CONFIG_PREFIX=/home/researcher/.npm-global \
-    PATH="/home/researcher/.npm-global/bin:${PATH}"
+    PATH="/home/researcher/.safe-chain/shims:/home/researcher/.safe-chain/bin:/home/researcher/.npm-global/bin:${PATH}"
 RUN mkdir -p $NPM_CONFIG_PREFIX \
  && npm install -g \
         @openrig/cli \

@@ -10,7 +10,7 @@ The container is the isolation boundary — a malicious repo can't touch your ho
 
 | Layer | Tools |
 |-------|-------|
-| Supply chain | depenemy, osv-scanner, trivy, grype |
+| Supply chain | Aikido Safe Chain runtime hardening, depenemy, osv-scanner, trivy, grype, campaign IOC scanner |
 | SAST | semgrep (auto-config), codeql (opt-in) |
 | Secrets | gitleaks |
 | Agents | Claude Code, Codex, OpenRig CLI |
@@ -93,6 +93,8 @@ work/
 └── repo-20260427-143012/
     ├── repo/              # cloned source (removed unless --keep-source)
     ├── findings/
+    │   ├── safe-chain.json       # Aikido Safe Chain setup/verification status
+    │   ├── supply-chain-ioc-scan.json
     │   ├── depenemy.json
     │   ├── osv-scanner.json
     │   ├── trivy.json
@@ -101,6 +103,18 @@ work/
     │   └── semgrep.json
     └── report.md          # only if --synth
 ```
+
+## Aikido Safe Chain runtime hardening
+
+The image includes a pinned Aikido Safe Chain binary. Each `investigate` run executes
+`safe-chain setup-ci`, prepends `~/.safe-chain/shims` to PATH, verifies npm/pip
+wrappers, and writes `findings/safe-chain.json`. This protects package-manager
+commands that run inside the rig from known-malicious npm/PyPI packages and from
+packages younger than Safe Chain's minimum-age policy.
+
+This is defense-in-depth for runtime package downloads. It does **not** replace the
+static scanners or campaign IOC scanner, because Safe Chain only triggers when a
+package manager downloads packages.
 
 ## Caveats / known gotchas
 

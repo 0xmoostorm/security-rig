@@ -71,6 +71,58 @@ run() {
     if "$@"; then echo "  ✓ $label"; else echo "  ⚠ $label exited $?"; fi
 }
 
+log "safe-chain setup"
+SAFE_CHAIN_JSON="$F/safe-chain.json"
+SAFE_CHAIN_VERSION="not-installed"
+SAFE_CHAIN_SETUP_RC=127
+SAFE_CHAIN_NPM_RC=127
+SAFE_CHAIN_PIP_RC=127
+SAFE_CHAIN_SETUP_OUT=""
+SAFE_CHAIN_NPM_OUT=""
+SAFE_CHAIN_PIP_OUT=""
+if command -v safe-chain >/dev/null 2>&1; then
+    SAFE_CHAIN_VERSION=$(safe-chain --version 2>&1 || true)
+    set +e
+    SAFE_CHAIN_SETUP_OUT=$(safe-chain setup-ci 2>&1)
+    SAFE_CHAIN_SETUP_RC=$?
+    hash -r 2>/dev/null || true
+    SAFE_CHAIN_NPM_OUT=$(npm safe-chain-verify 2>&1)
+    SAFE_CHAIN_NPM_RC=$?
+    SAFE_CHAIN_PIP_OUT=$(pip safe-chain-verify 2>&1)
+    SAFE_CHAIN_PIP_RC=$?
+    set -e
+else
+    SAFE_CHAIN_SETUP_OUT="safe-chain binary not found"
+fi
+export SAFE_CHAIN_VERSION SAFE_CHAIN_SETUP_RC SAFE_CHAIN_NPM_RC SAFE_CHAIN_PIP_RC \
+       SAFE_CHAIN_SETUP_OUT SAFE_CHAIN_NPM_OUT SAFE_CHAIN_PIP_OUT
+python3 - <<'PY' > "$SAFE_CHAIN_JSON"
+import json, os
+setup_rc = int(os.environ.get("SAFE_CHAIN_SETUP_RC", "127"))
+npm_rc = int(os.environ.get("SAFE_CHAIN_NPM_RC", "127"))
+pip_rc = int(os.environ.get("SAFE_CHAIN_PIP_RC", "127"))
+print(json.dumps({
+    "scanner": "safe-chain-status",
+    "tool": "Aikido Safe Chain",
+    "version": os.environ.get("SAFE_CHAIN_VERSION", "unknown"),
+    "enabled": setup_rc == 0 and (npm_rc == 0 or pip_rc == 0),
+    "setup_ci": {"exit_code": setup_rc, "output": os.environ.get("SAFE_CHAIN_SETUP_OUT", "")[-4000:]},
+    "verification": {
+        "npm": {"exit_code": npm_rc, "output": os.environ.get("SAFE_CHAIN_NPM_OUT", "")[-4000:]},
+        "pip": {"exit_code": pip_rc, "output": os.environ.get("SAFE_CHAIN_PIP_OUT", "")[-4000:]},
+    },
+    "notes": [
+        "Safe Chain shims are prepended to PATH for package-manager commands executed during the rig run.",
+        "This is runtime hardening, not a replacement for static lockfile/IOC scanning."
+    ],
+}, indent=2, sort_keys=True))
+PY
+if [[ $SAFE_CHAIN_SETUP_RC -eq 0 ]]; then
+    echo "  ✓ safe-chain setup-ci ($SAFE_CHAIN_VERSION)"
+else
+    echo "  ⚠ safe-chain setup-ci exited $SAFE_CHAIN_SETUP_RC"
+fi
+
 run "depenemy"     depenemy scan . --output json --output-file "$F/depenemy.json"
 run "supply-chain IOC scan" bash -c "supply-chain-ioc-scan . > '$F/supply-chain-ioc-scan.json'"
 
